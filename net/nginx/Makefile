@@ -357,6 +357,7 @@ CONFIGURE_ARGS += \
 	--with-ld-opt="$(TARGET_LDFLAGS)" \
 	--without-http_upstream_zone_module \
 	--without-pcre2 \
+	--with-compat \
 	--with-http_ssl_module \
 	$(if $(call IsDisabled,NGINX_HTTP_CACHE),--without-http-cache) \
 	$(if $(call IsDisabled,NGINX_PCRE),--without-pcre) \
