@@ -2,77 +2,91 @@
 # Copyright (C) 2015 OpenWrt.org
 
 START=80
-
 USE_PROCD=1
 
-G_OPTS="daemon off;"
+dyn_src_dir=/etc/nginx/conf.d
+dyn_dst_dir=/var/etc/nginx/conf.d
+nginx_conf=/etc/nginx/nginx.conf
 
-NGINX_UTIL="/usr/bin/nginx-util"
+render_dynconf() {
+	# Generate load_module directives
+	find /usr/lib/nginx/modules -mindepth 1 -type f -name '*.so' \
+		| sed -E 's/(.+)/load_module \1;/' \
+			>/var/etc/nginx/modules.conf
 
-eval $("${NGINX_UTIL}" get_env)
+	# Remove generated conf files that don't have a corresponding dynconf file
+	find $dyn_dst_dir \
+		-name '*.conf' \
+		| while read -r dst; do
+			src=$dyn_src_dir/${dst#"$dyn_dst_dir/"}.sh
+			if [ ! -e "$src" ]; then
+				rm -r "$dst"
+			fi
+		done
 
-CONF=""
+	# Generate conf files from dynconf files
+	find $dyn_src_dir \
+		-name '*.conf.sh' \
+		-print \
+		| while read -r src; do
+			dst=$dyn_dst_dir/${src#"$dyn_src_dir/"}
+			dst=${dst%.sh}
+			content=$(sh "$src")
+			case $? in
+			0)
+				mkdir -p "$(dirname "$dst")"
+				echo "$content" >"$dst"
+				;;
+			1) rm -rf "$dst" ;;
+			*) logger -t nginx -p daemon.err -s "Faild to render dynamic config from $src" ;;
+			esac
+		done
 
-
-nginx_init() {
-	[ -z "${CONF}" ] || return # already called.
-
-	[ -d /var/log/nginx ] || mkdir -p /var/log/nginx
-	[ -d /var/lib/nginx ] || mkdir -p /var/lib/nginx
-
-	rm -f "$(readlink "${UCI_CONF}")"
-	${NGINX_UTIL} init_lan
-
-	if [ -e "${UCI_CONF}" ]
-	then CONF="${UCI_CONF}"
-	else CONF="${NGINX_CONF}"
-	fi
-
-	local message
-	message="$(/usr/sbin/nginx -t -c "${CONF}" -g "${G_OPTS}" 2>&1)" ||
-	{
-		echo -e "${message}" | logger -t "nginx_init" -p "daemon.err"
-		logger -s -t "nginx_init" -p "daemon.err" "NOT using conf file!"
-		echo "show config to be used by: nginx -T -c '${CONF}'" >&2
+	local msg
+	msg=$(/usr/sbin/nginx -t -c "$nginx_conf" -g 'daemon off;' 2>&1)
+	if [ $? != 0 ]; then
+		{
+			echo "Invalid config file, skipped loading:"
+			echo "$msg"
+		} | logger -t "nginx" -p "daemon.err"
 		exit 1
-	}
-
-	logger -t "nginx_init" -p "daemon.info" "using ${CONF} (the test is ok)"
+	fi
 }
 
-
 start_service() {
-	nginx_init
+	mkdir -p \
+		/var/lib/nginx \
+		/var/log/nginx \
+		$dyn_dst_dir
+	# For backward compatibility with nginx-util generated conf
+	local conf=/etc/nginx/uci.conf
+	if [ ! -e "$conf" ]; then
+		conf=$nginx_conf
+		render_dynconf
+	fi
 
 	procd_open_instance
-	procd_set_param command /usr/sbin/nginx -c "${CONF}" -g "${G_OPTS}"
+	procd_set_param command /usr/sbin/nginx -c "$conf" -g 'daemon off;'
 	procd_set_param stdout 1
 	procd_set_param stderr 1
-	procd_set_param file "${CONF}" "${CONF_DIR}*.crt" "${CONF_DIR}*.key" \
-		"${CONF_DIR}*.conf" "${CONF_DIR}*.locations"
 	procd_set_param respawn
 	procd_close_instance
 }
 
-
 reload_service() {
-	nginx_init
-
-	if [ "$(cat "/proc/$(cat "/var/run/nginx.pid")/cmdline")" = \
-	     "nginx: master process /usr/sbin/nginx -c ${CONF} -g ${G_OPTS}" ]
-	then procd_send_signal nginx
-	else restart
-	fi
+	rc_procd start_service
+	procd_send_signal nginx
 }
-
 
 service_triggers() {
-	procd_add_raw_trigger acme.renew 5000 /etc/init.d/nginx reload
+	# Reload without re-generating dynamic configs on acme renew
+	procd_add_raw_trigger acme.renew 5000 /usr/sbin/nginx -s reload
+	# Re-generating and reload dynamic configs on iface change
+	procd_add_raw_trigger iface 1000 /etc/init.d/nginx reload
 }
-
 
 extra_command "relog" "Reopen log files (without reloading)"
 relog() {
-	[ -d /var/log/nginx ] || mkdir -p /var/log/nginx
+	mkdir -p /var/log/nginx
 	procd_send_signal nginx '*' USR1
 }

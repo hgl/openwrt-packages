@@ -1,0 +1,27 @@
+. /usr/lib/nginx/functions.sh
+
+output <<EOF
+server {
+	$(ngx_listen_wan 443 ssl http2 default_server)
+	# Standard certificate locations used in acme packages
+	ssl_certificate /etc/ssl/acme/example.com.fullchain.crt;
+	ssl_certificate_key /etc/ssl/acme/example.com.key;
+	ssl_trusted_certificate /etc/ssl/acme/example.com.chain.crt;
+
+	root /path/to/site;
+	# Uncomment the include directives to allow defining locations in separate
+	# *.conf and *.conf.sh files for this server.
+	#
+	# include /var/etc/nginx/conf.d/example.com/*.conf;
+	# include conf.d/example.com/*.conf;
+}
+server {
+	$(ngx_listen_wan 80 default_server)
+	location / {
+		return 302 https://\$host\$request_uri;
+	}
+	# This makes Nginx answers acme challenges from /var/lib/acme/challenge,
+	# which is the standard location used by acme packages
+	include acme.conf;
+}
+EOF

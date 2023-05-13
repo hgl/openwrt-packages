@@ -84,6 +84,7 @@ PKG_CONFIG_DEPENDS := \
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/nls.mk
+include $(INCLUDE_DIR)/version.mk
 
 define Package/nginx/default
   SECTION:=net
@@ -110,9 +111,7 @@ define Package/nginx-ssl
   TITLE += with SSL support
   VARIANT:=ssl
   DEPENDS+= +NGINX_PCRE:libpcre \
-	+NGINX_PCRE:nginx-ssl-util +!NGINX_PCRE:nginx-ssl-util-nopcre \
 	+NGINX_HTTP_GZIP:zlib +NGINX_DAV:libxml2
-  EXTRA_DEPENDS:=nginx-ssl-util$(if $(CONFIG_NGINX_PCRE),,-nopcre) (>=1.5-1) (<2)
   CONFLICTS:=nginx-full
 endef
 
@@ -136,31 +135,31 @@ config_files := mime.types \
 	$(if $(call IsEnabled,NGINX_HTTP_SCGI),scgi_params)
 
 define Package/nginx-ssl/install
-	$(INSTALL_DIR) $(1)/usr/sbin
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/nginx $(1)/usr/sbin/
-	$(INSTALL_DIR) $(1)/etc/nginx/conf.d
-	$(INSTALL_DATA) $(addprefix $(PKG_INSTALL_DIR)/etc/nginx/,$(config_files)) $(1)/etc/nginx/
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/nginx.init $(1)/etc/init.d/nginx
-endef
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_CONF) ./files/nginx.config $(1)/etc/config/nginx
+	$(VERSION_SED_SCRIPT) $(1)/etc/config/nginx
 
-define Package/nginx-ssl/prerm
-#!/bin/sh
-[ -z "$${IPKG_INSTROOT}" ] || exit 0
-[ "$${PKG_UPGRADE}" = "1" ] && exit 0
-eval $$(/usr/bin/nginx-util get_env)
-[ "$$(uci get "nginx.$${LAN_NAME}.$${MANAGE_SSL}")" = "self-signed" ] || exit 0
-rm -f "$$(uci get "nginx.$${LAN_NAME}.ssl_certificate")"
-rm -f "$$(uci get "nginx.$${LAN_NAME}.ssl_certificate_key")"
-exit 0
+	$(INSTALL_DIR) $(1)/usr/sbin
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/nginx $(1)/usr/sbin/
+	$(INSTALL_DIR) $(1)/etc/nginx/conf.d/default_server
+	$(INSTALL_DATA) $(addprefix $(PKG_INSTALL_DIR)/etc/nginx/,$(config_files)) $(1)/etc/nginx/
+	$(INSTALL_DATA) ./files/*.conf $(1)/etc/nginx/
+	$(INSTALL_DATA) ./files/conf.d/*.conf $(1)/etc/nginx/conf.d/
+	$(INSTALL_DATA) ./files/conf.d/*.conf.sh $(1)/etc/nginx/conf.d/
+	$(INSTALL_DATA) ./files/conf.d/*.sample $(1)/etc/nginx/conf.d/
+	$(INSTALL_DIR) $(1)/usr/lib/nginx
+	$(INSTALL_DATA) ./files/functions.sh $(1)/usr/lib/nginx/
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_DATA) ./files/procd.hotplug $(1)/etc/hotplug.d/iface/30-procd
 endef
 
 define Package/nginx-full
   $(Package/nginx/default)
   TITLE += with ALL module selected
-  DEPENDS+=+libpcre +nginx-ssl-util +zlib +libxml2 \
+  DEPENDS+=+libpcre +zlib +libxml2 \
     $(foreach m,$(PKG_MOD_ALL),+nginx-mod-$(m))
-  EXTRA_DEPENDS:=nginx-ssl-util (>=1.5-1) (<2)
   VARIANT:=full
   PROVIDES += nginx-ssl
 endef
@@ -169,8 +168,6 @@ Package/nginx-full/description = $(Package/nginx/description) \
   This variant is compiled with ALL module selected.
 
 Package/nginx-full/install = $(Package/nginx-ssl/install)
-
-Package/nginx-full/prerm = $(Package/nginx-ssl/prerm)
 
 Package/nginx-full/conffiles = $(Package/nginx/conffiles)
 
@@ -191,10 +188,8 @@ define Package/nginx-mod-luci/description
 endef
 
 define Package/nginx-mod-luci/install
-	$(INSTALL_DIR) $(1)/etc/nginx/conf.d
-	$(INSTALL_CONF) ./files-luci-support/luci.locations $(1)/etc/nginx/conf.d/
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files-luci-support/60_nginx-luci-support $(1)/etc/uci-defaults/60_nginx-luci-support
+	$(INSTALL_DIR) $(1)/etc/nginx/conf.d/default_server
+	$(INSTALL_DATA) ./files/conf.d/default_server/luci.conf $(1)/etc/nginx/conf.d/default_server/
 endef
 
 define Download/nginx-mod-headers-more

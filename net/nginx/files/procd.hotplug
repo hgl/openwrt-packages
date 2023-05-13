@@ -1,0 +1,1 @@
+ubus call service event '{"type":"iface","data":{}}'
